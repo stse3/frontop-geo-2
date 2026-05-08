@@ -1,0 +1,4 @@
+build/
+assets/.env
+assets/credentials.json
+build/RouterConfigGUI

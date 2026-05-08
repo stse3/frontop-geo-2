@@ -1,0 +1,7 @@
+paramiko
+scp
+python-dotenv
+google-cloud-storage
+google-auth
+pillow
+pyinstaller
