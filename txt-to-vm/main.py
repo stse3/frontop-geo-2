@@ -1,177 +1,114 @@
-import os
-import re
+import json
 import logging
-from datetime import datetime, timedelta
-from google.cloud import bigquery
+import os
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
-# Configure logging
-logging.basicConfig(level=logging.INFO,
-                   format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
 logger = logging.getLogger(__name__)
 
-# BigQuery client
-client = bigquery.Client()
+LISTEN_HOST = os.getenv("VM_LISTEN_HOST", "0.0.0.0")
+LISTEN_PORT = int(os.getenv("VM_LISTEN_PORT", "8080"))
+INGEST_PATH = os.getenv("VM_INGEST_PATH", "/ingest")
+API_KEY = os.getenv("VM_API_KEY", "")
+OUTPUT_DIR = Path(
+    os.getenv(
+        "VM_OUTPUT_DIR",
+        r"C:\Users\instr_data_frontop\Desktop\geosonic-data\live",
+    )
+)
 
-# Configuration
-BIGQUERY_SOURCE_TABLE = 'frontop-geosonic.sensor_config.vibration_data'
-PROCESSED_TIMESTAMP_TABLE = 'frontop-geosonic.sensor_config.processed_timestamps'
-DEVICE_DATA_DIR = 'C:\\Users\\instr_data_frontop\\Desktop\\geosonic-data\\txt-files'
+def output_file_for_today() -> Path:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    return OUTPUT_DIR / f"events-{datetime.now():%Y%m%d}.jsonl"
 
 
- # Replace with your VM path
+def normalize_payload(payload):
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        return [payload]
+    raise ValueError("JSON payload must be an object or an array")
 
-def sanitize_filename(device_id):
-    """Sanitize device_id to be a valid filename."""
-    sanitized = re.sub(r'[<>:"/\\|?*]', '_', device_id)
-    return sanitized
 
-def get_last_processed(device_id):
-    """Fetch the last processed timestamp from BigQuery for the given device."""
-    try:
-        query = f"""
-        SELECT last_processed
-        FROM `{PROCESSED_TIMESTAMP_TABLE}`
-        WHERE device_id = @device_id
-        """
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("device_id", "STRING", device_id)
-            ]
-        )
-        query_job = client.query(query, job_config=job_config)
-        result = query_job.result()
-        
-        if result.total_rows == 0:
-            return None
-            
-        for row in result:
-            return row['last_processed']
-    except Exception as e:
-        logger.error(f"Error fetching last processed timestamp: {str(e)}")
-        return None
+class IngestHandler(BaseHTTPRequestHandler):
+    def _send_json(self, status_code, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
-def update_last_processed(device_id, timestamp):
-    """Update the last processed timestamp in BigQuery."""
-    try:
-        query = f"""
-        MERGE `{PROCESSED_TIMESTAMP_TABLE}` T
-        USING (SELECT @device_id as device_id, @timestamp as last_processed) S
-        ON T.device_id = S.device_id
-        WHEN MATCHED THEN
-            UPDATE SET last_processed = S.last_processed
-        WHEN NOT MATCHED THEN
-            INSERT (device_id, last_processed) VALUES(device_id, last_processed)
-        """
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("device_id", "STRING", device_id),
-                bigquery.ScalarQueryParameter("timestamp", "TIMESTAMP", timestamp)
-            ]
-        )
-        query_job = client.query(query, job_config=job_config)
-        query_job.result()
-        logger.info(f"Updated last processed timestamp for {device_id} to {timestamp}")
-    except Exception as e:
-        logger.error(f"Error updating last processed timestamp: {str(e)}")
+    def _read_json(self):
+        content_length = int(self.headers.get("Content-Length", "0"))
+        if content_length <= 0:
+            raise ValueError("Request body is empty")
 
-def process_device_data(device_id, lookback_hours=24):
-    """Process data for a single device and save to local file."""
-    try:
-        last_processed = get_last_processed(device_id)
-        logger.info(f"Last processed timestamp for {device_id}: {last_processed}")
-        
-        # Build query
-        query = f"""
-            SELECT 
-                device_id,
-                FORMAT_DATETIME('%m/%d/%y %H:%M:00', recorded_datetime) as formatted_time,
-                event_number,
-                vppv,
-                vf,
-                lppv,
-                lf,
-                tppv,
-                tf,
-                pspl_dB,
-                inserted_datetime
-            FROM `{BIGQUERY_SOURCE_TABLE}`
-            WHERE device_id = @device_id
-        """
-        
-        query_params = [bigquery.ScalarQueryParameter("device_id", "STRING", device_id)]
-        
-        if last_processed:
-            query += " AND inserted_datetime > @last_processed"
-            query_params.append(
-                bigquery.ScalarQueryParameter("last_processed", "TIMESTAMP", last_processed)
-            )
-        else:
-            lookback_timestamp = datetime.utcnow() - timedelta(hours=lookback_hours)
-            query += " AND inserted_datetime >= @lookback_time"
-            query_params.append(
-                bigquery.ScalarQueryParameter("lookback_time", "TIMESTAMP", lookback_timestamp)
-            )
-        
-        query += " ORDER BY inserted_datetime"
-        
-        # Execute query
-        job_config = bigquery.QueryJobConfig(query_parameters=query_params)
-        query_job = client.query(query, job_config=job_config)
-        results = list(query_job.result())
-        
-        if not results:
-            logger.info(f"No new data for device {device_id}")
-            return 0
-            
-        # Prepare file path
-        os.makedirs(DEVICE_DATA_DIR, exist_ok=True)
-        file_path = os.path.join(DEVICE_DATA_DIR, f"{sanitize_filename(device_id)}.txt")
-        
-        # Write data to file
-        max_timestamp = None
-        with open(file_path, 'a') as f:
-            for row in results:
-                line = (f"{row.formatted_time} {row.event_number} {row.vppv} {row.vf} "
-                       f"{row.lppv} {row.lf} {row.tppv} {row.tf} {row.pspl_dB}\n")
-                f.write(line)
-                max_timestamp = row.inserted_datetime
-        
-        # Update last processed timestamp
-        if max_timestamp:
-            update_last_processed(device_id, max_timestamp)
-        
-        return len(results)
-    
-    except Exception as e:
-        logger.error(f"Error processing device {device_id}: {str(e)}")
-        return None
+        raw_body = self.rfile.read(content_length)
+        return json.loads(raw_body.decode("utf-8"))
+
+    def _is_authorized(self):
+        if not API_KEY:
+            return True
+        return self.headers.get("X-API-Key", "") == API_KEY
+
+    def do_GET(self):
+        if self.path == "/health":
+            self._send_json(200, {"ok": True})
+            return
+        self._send_json(404, {"error": "not found"})
+
+    def do_POST(self):
+        if self.path != INGEST_PATH:
+            self._send_json(404, {"error": "not found"})
+            return
+
+        if not self._is_authorized():
+            self._send_json(401, {"error": "unauthorized"})
+            return
+
+        try:
+            payload = self._read_json()
+            events = normalize_payload(payload)
+        except Exception as exc:
+            logger.exception("Failed to parse request")
+            self._send_json(400, {"error": str(exc)})
+            return
+
+        output_file = output_file_for_today()
+        try:
+            with output_file.open("a", encoding="utf-8") as handle:
+                for event in events:
+                    if not isinstance(event, dict):
+                        raise ValueError("Each event must be a JSON object")
+                    handle.write(json.dumps(event, sort_keys=True) + "\n")
+        except Exception as exc:
+            logger.exception("Failed to persist streamed events")
+            self._send_json(500, {"error": str(exc)})
+            return
+
+        logger.info("Stored %d event(s) in %s", len(events), output_file)
+        self._send_json(200, {"ok": True, "stored": len(events)})
+
+    def log_message(self, format, *args):
+        logger.info("%s - %s", self.address_string(), format % args)
+
 
 def main():
+    server = ThreadingHTTPServer((LISTEN_HOST, LISTEN_PORT), IngestHandler)
+    logger.info("Listening on http://%s:%s%s", LISTEN_HOST, LISTEN_PORT, INGEST_PATH)
     try:
-        # Get list of active devices
-        query = f"""
-        SELECT DISTINCT device_id 
-        FROM `{BIGQUERY_SOURCE_TABLE}`
-        WHERE inserted_datetime >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
-        """
-        
-        query_job = client.query(query)
-        device_ids = [row.device_id for row in query_job.result()]
-        
-        total_devices_processed = 0
-        total_records_processed = 0
-        
-        for device_id in device_ids:
-            records_processed = process_device_data(device_id)
-            if records_processed:
-                total_records_processed += records_processed
-                total_devices_processed += 1
-        
-        logger.info(f"Run summary: {total_devices_processed} devices, {total_records_processed} records")
-        
-    except Exception as e:
-        logger.error(f"Critical error: {str(e)}")
-        raise
+        server.serve_forever()
+    except KeyboardInterrupt:
+        logger.info("Shutting down ingest server")
+    finally:
+        server.server_close()
+
 
 if __name__ == "__main__":
     main()

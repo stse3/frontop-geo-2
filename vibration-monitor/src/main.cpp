@@ -100,6 +100,100 @@ private:
         if (settings.find("threshold") == settings.end()) settings["threshold"] = "1.0";
         if (settings.find("data_dir") == settings.end()) settings["data_dir"] = "/tmp/vibration_data";
         if (settings.find("clear_events") == settings.end()) settings["clear_events"] = "false";
+        if (settings.find("vm_endpoint") == settings.end()) settings["vm_endpoint"] = "";
+        if (settings.find("vm_api_key") == settings.end()) settings["vm_api_key"] = "";
+    }
+};
+
+class VmEventStreamer {
+    CURL* curl;
+    std::string endpoint;
+    std::string api_key;
+    std::string device_id;
+
+public:
+    explicit VmEventStreamer(const Config& cfg)
+        : curl(nullptr),
+          endpoint(cfg.get("vm_endpoint")),
+          api_key(cfg.get("vm_api_key")),
+          device_id(cfg.get("device_id")) {
+        if (!endpoint.empty()) {
+            curl = curl_easy_init();
+            if (!curl) {
+                std::cerr << "Failed to initialize CURL for VM streaming" << std::endl;
+            }
+        }
+    }
+
+    bool enabled() const {
+        return curl != nullptr && !endpoint.empty();
+    }
+
+    bool streamEvents(const std::vector<VibrationData>& events) {
+        if (!enabled() || events.empty()) {
+            return true;
+        }
+
+        struct curl_slist* headers = nullptr;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        if (!api_key.empty()) {
+            headers = curl_slist_append(headers, ("X-API-Key: " + api_key).c_str());
+        }
+
+        curl_easy_setopt(curl, CURLOPT_URL, endpoint.c_str());
+        curl_easy_setopt(curl, CURLOPT_POST, 1L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+        bool all_success = true;
+        for (const auto& event : events) {
+            nlohmann::json payload = {
+                {"datetime", event.datetime},
+                {"device_id", device_id},
+                {"type", event.type},
+                {"unit", event.unit},
+                {"vppv", event.vppv},
+                {"lppv", event.lppv},
+                {"tppv", event.tppv},
+                {"vf", event.vf},
+                {"lf", event.lf},
+                {"tf", event.tf},
+                {"pspl_dB", event.pspl_dB},
+                {"sensor_sn", event.sensor_sn}
+            };
+
+            if (event.has_reference) {
+                payload["reference_value"] = event.reference_value;
+            }
+
+            std::string body = payload.dump();
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, body.length());
+
+            long http_code = 0;
+            CURLcode res = curl_easy_perform(curl);
+            if (res != CURLE_OK) {
+                std::cerr << "VM stream curl error: " << curl_easy_strerror(res) << std::endl;
+                all_success = false;
+                continue;
+            }
+
+            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+            if (http_code < 200 || http_code >= 300) {
+                std::cerr << "VM stream HTTP error: " << http_code << std::endl;
+                all_success = false;
+            }
+        }
+
+        curl_slist_free_all(headers);
+        return all_success;
+    }
+
+    ~VmEventStreamer() {
+        if (curl) {
+            curl_easy_cleanup(curl);
+        }
     }
 };
 
@@ -496,6 +590,7 @@ class VibrationReader {
     bool connected;
     bool clear_events;
     Config cfg;
+    VmEventStreamer vm_streamer;
     std::string program_start_time;
     std::string sensor_sn;
 
@@ -597,6 +692,7 @@ public:
           connected(false),
           clear_events(config.get("clear_events") == "true"),
           cfg(config),
+                    vm_streamer(config),
           program_start_time("") {
         if (port.getPort().empty()) {
             std::cerr << "No serial port detected, falling back to config value: " << config.get("tty_device") << std::endl;
@@ -744,6 +840,10 @@ public:
         std::cout << "Attempting to parse events from data: " << data << std::endl;
         auto events = parseEvents(data);
         std::cout << "Found " << events.size() << " events" << std::endl;
+
+        if (!vm_streamer.streamEvents(events)) {
+            std::cerr << "One or more events failed to stream to the VM endpoint" << std::endl;
+        }
 
         // save events to a daily log file
         saveEvents(events, filename);
