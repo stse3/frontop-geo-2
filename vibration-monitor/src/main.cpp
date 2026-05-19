@@ -62,6 +62,7 @@ struct VibrationData {
     float reference_value{0}; // For TRIG events, 0 for HIST
     bool has_reference{false}; // Flag to indicate if reference value exists
     std::string sensor_sn; //sensor_sn loged
+    int battery_percent{-1};
 
     VibrationData() = default;
     explicit VibrationData(const std::string& dt) : datetime(dt) {}
@@ -160,7 +161,8 @@ public:
                 {"lf", event.lf},
                 {"tf", event.tf},
                 {"pspl_dB", event.pspl_dB},
-                {"sensor_sn", event.sensor_sn}
+                {"sensor_sn", event.sensor_sn},
+                {"battery_percent", event.battery_percent}
             };
 
             if (event.has_reference) {
@@ -593,6 +595,7 @@ class VibrationReader {
     VmEventStreamer vm_streamer;
     std::string program_start_time;
     std::string sensor_sn;
+    int battery_percent{-1};
 
 
     std::vector<VibrationData> parseEvents(const std::string& data) {
@@ -625,6 +628,7 @@ class VibrationReader {
                 event.reference_value = std::stof(match[11]);
             }
             event.sensor_sn = sensor_sn;
+            event.battery_percent = battery_percent;
             std::cout << "Added event with timestamp: " << event.datetime << " and sensor SN: " << event.sensor_sn << std::endl;
             events.push_back(event);
             
@@ -674,7 +678,8 @@ class VibrationReader {
                  << event.tppv << " "
                  << event.vf << " "
                  << event.lf << " "
-                 << event.tf << "\n";
+                  << event.tf << " "
+                  << event.battery_percent << "\n";
         }
 
         std::cout << "Saved " << events.size() << " events to " << output_filename << std::endl;
@@ -725,6 +730,24 @@ public:
         }
         return "";
     }
+
+    int extractBatteryPercent(const std::string& response) {
+        try {
+            std::regex battery_regex(R"(\(\s*\d+\s*,\s*(\d+)%\s*\))");
+            std::smatch match;
+
+            if (std::regex_search(response, match, battery_regex)) {
+                std::cout << "Battery Found: [" << match[1] << "%]" << std::endl;
+                return std::stoi(match[1]);
+            }
+
+            std::cout << "No battery match found" << std::endl;
+        } catch (const std::regex_error& e) {
+            std::cout << "Regex error: " << e.what() << std::endl;
+        }
+
+        return -1;
+    }
     
     bool connect() {
         std::cout << "Opening port " << port.getPort() << std::endl;
@@ -766,10 +789,14 @@ public:
         sleep(1);
         response = port.read();
         std:: string sensor_id = extractSensorId(response); //changed 
+        battery_percent = extractBatteryPercent(response);
 
 
         this->sensor_sn = sensor_id;
         std::cout <<"Detected sensor SN: " << this->sensor_sn <<std::endl;
+        if (battery_percent >= 0) {
+            std::cout << "Detected battery percent: " << battery_percent << "%" << std::endl;
+        }
 
 
         SensorKeyRetriever retriever(cfg); //changed
@@ -915,7 +942,8 @@ public:
                 {"lf", event.lf},
                 {"tf", event.tf},
                 {"pspl_dB", event.pspl_dB},
-                {"sensor_sn", event.sensor_sn}  
+                {"sensor_sn", event.sensor_sn},
+                {"battery_percent", event.battery_percent}  
             };
             if (event.has_reference) {
                 j["reference_value"] = event.reference_value;
@@ -978,7 +1006,7 @@ bool readEventsFromFile(const std::string& filename, std::vector<VibrationData>&
             VibrationData event;
             
             // Read fields in the new space-separated format:
-            // DateTime Vppv Lppv Tppv Vf Lf Tf
+            // DateTime Vppv Lppv Tppv Vf Lf Tf BatteryPercent
             std::getline(iss, event.datetime, ' ');
             std::getline(iss, field, ' ');
             event.datetime += " " + field;
@@ -988,6 +1016,9 @@ bool readEventsFromFile(const std::string& filename, std::vector<VibrationData>&
             std::getline(iss, field, ' '); event.vf = std::stof(field);
             std::getline(iss, field, ' '); event.lf = std::stof(field);
             std::getline(iss, field, ' '); event.tf = std::stof(field);
+            if (std::getline(iss, field, ' ')) {
+                event.battery_percent = std::stoi(field);
+            }
 
             events.push_back(event);
         } catch (const std::exception& e) {

@@ -34,3 +34,5 @@
 installer_GUI/build
 installer_GUI/.env
 update_sensor_files/.env
+openwrt-sdk
+out
