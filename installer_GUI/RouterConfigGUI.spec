@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['router_config_gui.py'],
+    ['/Users/sherrytse/Documents/GitHub/2-frontop/installer_GUI/router_config_gui.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:\\Users\\DELL\\Desktop\\frontop\\installer_gui\\images\\frontop_logo.jpg', 'images'), ('C:\\Users\\DELL\\Desktop\\frontop\\installer_gui\\assets\\.env', 'assets'), ('C:\\Users\\DELL\\Desktop\\frontop\\installer_gui\\assets\\credentials.json', 'assets'), ('C:\\Users\\DELL\\Desktop\\frontop\\installer_gui\\assets\\sensor-setup_1.0.1-2_mips_24kc.ipk', 'assets')],
+    datas=[('/Users/sherrytse/Documents/GitHub/2-frontop/installer_GUI/images/frontop_logo.jpg', 'images'), ('/Users/sherrytse/Documents/GitHub/2-frontop/installer_GUI/assets/credentials.json', 'assets'), ('/Users/sherrytse/Documents/GitHub/2-frontop/installer_GUI/assets/sensor-setup_1.0.1-2_mips_24kc.ipk', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -35,4 +35,10 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+app = BUNDLE(
+    exe,
+    name='RouterConfigGUI.app',
+    icon=None,
+    bundle_identifier=None,
 )

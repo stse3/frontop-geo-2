@@ -10,7 +10,6 @@ from PIL import Image, ImageTk
 from scp import SCPClient
 import time
 import textwrap
-from dotenv import load_dotenv
 import subprocess
 import tempfile
 import threading
@@ -37,7 +36,6 @@ def resource_path(relative_path, subfolder=None):
 class RouterConfigGUI:
     def __init__(self):
         self.setup_logging()
-        self.load_env_file()
         self.setup_gui()
         self.load_logo()
 
@@ -49,22 +47,10 @@ class RouterConfigGUI:
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
         self.logger = logging.getLogger(__name__)
     
-    def load_env_file(self):
-        """Load environment variables from .env file if it exists"""
-        env_path = resource_path('.env','assets')
-        if os.path.exists(env_path):
-            load_dotenv(env_path)
-            self.logger.info("Loaded environment variables from .env file")
-            # Add these debug statements to verify API keys are loaded
-            self.logger.info(f"IPK_BUCKET_API_KEY present: {'Yes' if os.getenv('IPK_BUCKET_API_KEY') else 'No'}")
-            self.logger.info(f"VIBRATION_API_KEY present: {'Yes' if os.getenv('VIBRATION_API_KEY') else 'No'}")
-            self.logger.info(f"SENSOR_API_KEY present: {'Yes' if os.getenv('SENSOR_API_KEY') else 'No'}")
-        else:
-            self.logger.info("No .env file found. Please create one with VIBRATION_API_KEY, SENSOR_API_KEY, and IPK_BUCKET_API_KEY")
     def setup_gui(self):
         self.root = tk.Tk()
         self.root.title("Frontop Geosonic Sensor - Router Configuration Tool")
-        self.root.geometry("750x700")  # Increased height to accommodate new button
+        self.root.geometry("750x900")  # Increased height to accommodate VM settings
         
         # Create main frame with padding
         main_frame = ttk.Frame(self.root, padding="20")
@@ -99,9 +85,37 @@ class RouterConfigGUI:
         self.monitoring_mode.current(2)  # Default to 15 minutes
         self.monitoring_mode.grid(row=0, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
 
+        # API key inputs entered directly in the GUI
+        env_frame = ttk.LabelFrame(main_frame, text="API Key Settings", padding="10")
+        env_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+
+        ttk.Label(env_frame, text="Vibration API Key:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.vibration_api_key = ttk.Entry(env_frame, show="*", width=40)
+        self.vibration_api_key.grid(row=0, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
+
+        ttk.Label(env_frame, text="Sensor API Key:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.sensor_api_key = ttk.Entry(env_frame, show="*", width=40)
+        self.sensor_api_key.grid(row=1, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
+
+        ttk.Label(env_frame, text="IPK Bucket API Key:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+        self.ipk_bucket_api_key = ttk.Entry(env_frame, show="*", width=40)
+        self.ipk_bucket_api_key.grid(row=2, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
+
+        # VM Settings
+        vm_frame = ttk.LabelFrame(main_frame, text="VM Ingestion Settings", padding="10")
+        vm_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        
+        ttk.Label(vm_frame, text="VM Endpoint:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.vm_endpoint = ttk.Entry(vm_frame, width=40)
+        self.vm_endpoint.grid(row=0, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
+        
+        ttk.Label(vm_frame, text="VM API Key:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.vm_api_key = ttk.Entry(vm_frame, show="*", width=40)
+        self.vm_api_key.grid(row=1, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
+
         # Status Frame
         status_frame = ttk.LabelFrame(main_frame, text="Installation Status", padding="10")
-        status_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
+        status_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
         status_frame.columnconfigure(0, weight=1)
         status_frame.rowconfigure(0, weight=1)
         
@@ -118,11 +132,11 @@ class RouterConfigGUI:
         
         # Configure the status frame to expand
         main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(3, weight=1)
+        main_frame.rowconfigure(5, weight=1)
 
         # Progress Bar
         progress_frame = ttk.Frame(main_frame)
-        progress_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        progress_frame.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
         
         ttk.Label(progress_frame, text="Progress:").grid(row=0, column=0, sticky=tk.W, padx=5)
         self.progress = ttk.Progressbar(progress_frame, length=400, mode='determinate')
@@ -131,7 +145,7 @@ class RouterConfigGUI:
 
         # Button Frame
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=5, column=0, columnspan=3, pady=10)
+        button_frame.grid(row=7, column=0, columnspan=3, pady=10)
 
         # Style configuration for buttons
         style = ttk.Style()
@@ -424,13 +438,21 @@ class RouterConfigGUI:
             messagebox.showerror("Error", "Router password is required!")
             return False
             
-        # Check if API keys are set in environment
-        if not os.getenv("VIBRATION_API_KEY"):
-            messagebox.showerror("Error", "Vibration Data API Key is not set in .env file!")
+        # Check if API keys are entered in the GUI
+        if not self.vibration_api_key.get().strip():
+            messagebox.showerror("Error", "Vibration Data API Key is required!")
             return False
-        if not os.getenv("SENSOR_API_KEY"):
-            messagebox.showerror("Error", "Sensor List API Key is not set in .env file!")
+        if not self.sensor_api_key.get().strip():
+            messagebox.showerror("Error", "Sensor List API Key is required!")
             return False
+        if not self.ipk_bucket_api_key.get().strip():
+            messagebox.showerror("Error", "IPK Bucket API Key is required!")
+            return False
+
+        # Mirror GUI values into the process environment for any code paths that still use os.getenv
+        os.environ["VIBRATION_API_KEY"] = self.vibration_api_key.get().strip()
+        os.environ["SENSOR_API_KEY"] = self.sensor_api_key.get().strip()
+        os.environ["IPK_BUCKET_API_KEY"] = self.ipk_bucket_api_key.get().strip()
         
         # Download the latest IPK file before installation
         if not self.download_latest_ipk():
@@ -696,10 +718,11 @@ class GeoSonicInstaller:
 
     def create_config_file(self,client):
         """Generates the vibration.conf file that will be uploaded onto the router based on user input"""
-        # Get API keys from environment variables
-        api_key = os.getenv("VIBRATION_API_KEY")
-        sensor_api_key = os.getenv("SENSOR_API_KEY")
-        
+        # Get API keys from the GUI fields
+        api_key = self.gui.vibration_api_key.get().strip()
+        sensor_api_key = self.gui.sensor_api_key.get().strip()
+        vm_endpoint = self.gui.vm_endpoint.get()
+        vm_api_key = self.gui.vm_api_key.get()
 
         config_content = f"""\
 # Vibration monitor configuration
@@ -711,6 +734,8 @@ cloud_function_url=https://insert-vibration-data-836427764358.northamerica-north
 api_key={api_key}
 get_sensor_cloud_url=https://sensor-key-retrieval-836427764358.northamerica-northeast2.run.app
 get_sensor_api_key={sensor_api_key}
+vm_endpoint={vm_endpoint}
+vm_api_key={vm_api_key}
 device_id={self.get_mac_id(client)}
 """
 

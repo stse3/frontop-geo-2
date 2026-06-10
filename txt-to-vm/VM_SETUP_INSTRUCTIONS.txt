@@ -1,0 +1,121 @@
+VM Setup Instructions for txt-to-vm/main.py
+
+Purpose
+- Run this server on your Windows VM to receive POSTed vibration events and save them as per-sensor TXT logs.
+
+Prerequisites
+- Python 3.7+ installed on the VM
+- Network connectivity from the device that will POST events to the VM
+
+Environment variables
+Set these in the VM environment or create a small wrapper script that exports/sets them before running the server.
+
+Required:
+- VM_LISTEN_HOST (optional, default 0.0.0.0)
+- VM_LISTEN_PORT (optional, default 2026)
+- VM_INGEST_PATH (optional, default /ingest)
+- VM_API_KEY (recommended) — must match the `vm_api_key` you configure in the installer GUI
+- VM_OUTPUT_DIR — directory where per-sensor .txt files will be written (example below uses a Windows path)
+
+Example .env-style values (for reference):
+VM_LISTEN_HOST=0.0.0.0
+VM_LISTEN_PORT=2026
+VM_INGEST_PATH=/ingest
+VM_API_KEY=MySecretVmKey123
+VM_OUTPUT_DIR=C:\Users\YourUser\Desktop\geosonic-data\live
+
+Set environment variables (PowerShell example):
+
+```powershell
+[Environment]::SetEnvironmentVariable("VM_LISTEN_PORT", "2026", "User")
+[Environment]::SetEnvironmentVariable("VM_API_KEY", "MySecretVmKey123", "User")
+[Environment]::SetEnvironmentVariable("VM_OUTPUT_DIR", "C:\Users\YourUser\Desktop\geosonic-data\live", "User")
+```
+
+Running the server
+In a cmd/powershell window, from the `txt-to-vm` folder run:
+
+```powershell
+python main.py
+```
+
+Batch launcher option
+If you want a simple double-click launcher, use `run_sync.bat` in the same folder as `main.py`.
+
+Hidden launcher option
+If you want no visible window, use `run_silent_sync.vbs`, which launches `run_sync.bat` hidden.
+
+Basic verification
+- Health check:
+
+```powershell
+curl http://localhost:2026/health
+# expected: {"ok": true}
+```
+
+- If you set `VM_API_KEY`, the client must supply the same value in the `X-API-Key` header.
+
+Example POST payload
+The server accepts either a JSON object (single event) or an array of objects. Example payload:
+
+```json
+{
+  "datetime": "2025-01-27T11:02:00",
+  "device_id": "94:83:C4:23:7C:38",
+  "vppv": 19.88,
+  "lppv": 7.18,
+  "tppv": 9.65,
+  "vf": 12.5,
+  "lf": 15.2,
+  "tf": 1.8,
+  "battery_percent": 87
+}
+```
+
+What the server now writes
+- For each event it creates/appends a text file under `VM_OUTPUT_DIR` named using the sensor id (MAC) with colons removed, e.g. `9483C4237C38.txt`.
+- Each appended line has this format:
+
+MM/DD/YY HH:MM:SS vppv lppv tppv vf lf tf battery
+
+Example line written to `9483C4237C38.txt`:
+
+```
+01/27/25 11:02:00 19.88 7.18 9.65 12.50 15.20 1.80 87
+```
+
+Notes and tips
+- The server attempts to parse `datetime` in ISO format first; if missing or unparseable it will substitute the current time.
+- If a numeric field is missing the server writes `0.00` for that value and `-1` for unknown battery.
+- Ensure the `VM_API_KEY` environment variable matches the `vm_api_key` field you place in `vibration.conf` when you install/configure the device.
+- Permission: make sure the configured `VM_OUTPUT_DIR` folder is writable by the user running the Python process.
+
+Run at startup — Keep main.py always running
+
+Option 1: Windows Task Scheduler (Recommended)
+
+1. Open Task Scheduler (Win+R, type "taskschd.msc", press Enter)
+
+2. Click "Create Basic Task" on the right panel
+
+3. Give it a name: "Frontop VM Ingestion Server"
+
+4. Choose trigger: "At startup"
+
+5. Click "When a user logs in" or "At system startup" (depending on your preference)
+   - "At system startup" runs even if nobody is logged in
+   - "When a user logs in" runs after a specific user logs in
+
+6. Action: "Start a program"
+   - Program/script: C:\Python\python.exe (or wherever Python is installed)
+   - Add arguments: C:\path\to\txt-to-vm\main.py
+   - Start in: C:\path\to\txt-to-vm\
+
+7. Check "Run with highest privileges" if you encounter permission issues
+
+8. Click OK
+
+9. Test: Restart your VM and verify the server is running
+   ```powershell
+   curl http://localhost:2026/health
+   ```

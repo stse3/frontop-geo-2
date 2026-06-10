@@ -13,7 +13,6 @@ def build_exe():
     # Create directories if they don't exist
     assets_dir = os.path.join(current_dir, "assets")
     images_dir = os.path.join(current_dir, "images")
-    installer_gui_assets_dir = os.path.join(current_dir, "installer_GUI", "assets")
     
     if not os.path.exists(assets_dir):
         os.makedirs(assets_dir)
@@ -23,16 +22,9 @@ def build_exe():
         os.makedirs(images_dir)
         print(f"Created images directory at: {images_dir}")
     
-    if not os.path.exists(installer_gui_assets_dir):
-        os.makedirs(installer_gui_assets_dir)
-        print(f"Created installer_GUI/assets directory at: {installer_gui_assets_dir}")
-    
     # Define source and destination paths
     image_source = os.path.join(images_dir, "frontop_logo.jpg")
     image_dest = "images"
-    
-    env_file_source = os.path.join(assets_dir, ".env")
-    env_file_dest = "assets"
     
     credentials_file_source = os.path.join(assets_dir, "credentials.json")
     credentials_file_dest = "assets"
@@ -40,18 +32,10 @@ def build_exe():
     sensor_setup_source = os.path.join(assets_dir, "sensor-setup_1.0.1-2_mips_24kc.ipk")
     sensor_setup_dest =  "assets"
     
-    # Check if files exist and create placeholder files if needed
+    # Check if files exist and warn if they are missing.
     if not os.path.exists(credentials_file_source):
         print(f"WARNING: credentials.json not found at: {credentials_file_source}")
-        print("Creating a placeholder credentials.json file. Please replace with your actual file.")
-        with open(credentials_file_source, 'w') as f:
-            f.write('{"placeholder": "Replace with your actual credentials"}')
-    
-    if not os.path.exists(env_file_source):
-        print(f"WARNING: .env file not found at: {env_file_source}")
-        print("Creating a placeholder .env file. Please replace with your actual file.")
-        with open(env_file_source, 'w') as f:
-            f.write('# Replace with your actual .env content\nAPI_KEY=your_api_key_here')
+        print("Place your real credentials.json in installer_GUI/assets before building.")
     
     if not os.path.exists(image_source):
         print(f"WARNING: Image file not found at: {image_source}")
@@ -79,14 +63,15 @@ def build_exe():
     
     # Build the command
     pyinstaller_args = [
-        'router_config_gui.py',
+        os.path.join(current_dir, 'router_config_gui.py'),
         '--onefile',
         '--windowed',
         '--name=RouterConfigGUI',
         f'--add-data={image_source}{separator}{image_dest}',
-        f'--add-data={env_file_source}{separator}{env_file_dest}',
-        f'--add-data={credentials_file_source}{separator}{credentials_file_dest}',
     ]
+
+    if os.path.exists(credentials_file_source):
+        pyinstaller_args.append(f'--add-data={credentials_file_source}{separator}{credentials_file_dest}')
     
     # Add the sensor setup package if it exists
     if os.path.exists(sensor_setup_source):
