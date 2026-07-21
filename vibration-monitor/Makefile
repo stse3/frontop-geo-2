@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME := vibration-monitor
 PKG_VERSION := 2.0
-PKG_RELEASE := 1
+PKG_RELEASE := 3
 
 include $(INCLUDE_DIR)/package.mk
 

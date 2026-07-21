@@ -36,3 +36,4 @@ installer_GUI/.env
 update_sensor_files/.env
 openwrt-sdk
 out
+.vscode/settings.json

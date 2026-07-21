@@ -10,12 +10,15 @@ from PIL import Image, ImageTk
 from scp import SCPClient
 import time
 import textwrap
+from dotenv import load_dotenv
 import subprocess
 import tempfile
 import threading
 import queue
 from google.cloud import storage
 from google.oauth2 import service_account
+import paramiko
+import socket
 
 
 def resource_path(relative_path, subfolder=None):
@@ -36,6 +39,7 @@ def resource_path(relative_path, subfolder=None):
 class RouterConfigGUI:
     def __init__(self):
         self.setup_logging()
+        self.load_env_file()
         self.setup_gui()
         self.load_logo()
 
@@ -47,123 +51,128 @@ class RouterConfigGUI:
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
         self.logger = logging.getLogger(__name__)
     
+    def load_env_file(self):
+        """Load environment variables from .env file if it exists"""
+        env_path = resource_path('.env','assets')
+        if os.path.exists(env_path):
+            load_dotenv(env_path)
+            self.logger.info("Loaded environment variables from .env file")
+            self.logger.info(f"SENSOR_API_KEY present: {'Yes' if os.getenv('SENSOR_API_KEY') else 'No'}")
+        else:
+            self.logger.info("No .env file found. Please create one with SENSOR_API_KEY")
+    
+    
     def setup_gui(self):
         self.root = tk.Tk()
         self.root.title("Frontop Geosonic Sensor - Router Configuration Tool")
-        self.root.geometry("750x900")  # Increased height to accommodate VM settings
-        
+        self.root.geometry("750x750")  # slightly taller for new section
+
         # Create main frame with padding
         main_frame = ttk.Frame(self.root, padding="20")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        
-        # Title at the top
-        title_label = ttk.Label(main_frame, text="Vibration Monitor Configuration", 
-                              font=("Arial", 14, "bold"))
+
+        # Title
+        title_label = ttk.Label(
+            main_frame,
+            text="Vibration Monitor Configuration",
+            font=("Arial", 14, "bold")
+        )
         title_label.grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 20))
 
-        # Router Password
+        # Router Settings
         password_frame = ttk.LabelFrame(main_frame, text="Router Settings", padding="10")
         password_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
-        
+
         ttk.Label(password_frame, text="Router Password:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         self.password = ttk.Entry(password_frame, show="*", width=40)
         self.password.grid(row=0, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
 
-        # Monitoring Mode
+        # Monitoring Settings
         monitor_frame = ttk.LabelFrame(main_frame, text="Monitoring Settings", padding="10")
         monitor_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
-        
+
         ttk.Label(monitor_frame, text="Monitoring Interval:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         self.monitoring_mode = ttk.Combobox(monitor_frame, width=37, state="readonly")
         self.monitoring_mode['values'] = (
-            "Every 5 minutes", 
-            "Every 10 minutes", 
+            "Every 5 minutes",
+            "Every 10 minutes",
             "Every 15 minutes (Default)"
         )
-        self.monitoring_mode.current(2)  # Default to 15 minutes
+        self.monitoring_mode.current(2)
         self.monitoring_mode.grid(row=0, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
 
-        # API key inputs entered directly in the GUI
-        env_frame = ttk.LabelFrame(main_frame, text="API Key Settings", padding="10")
-        env_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        # =========================
+        # VM SETTINGS (NEW SECTION)
+        # =========================
+        vm_frame = ttk.LabelFrame(main_frame, text="VM Settings", padding="10")
+        vm_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
 
-        ttk.Label(env_frame, text="Vibration API Key:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-        self.vibration_api_key = ttk.Entry(env_frame, show="*", width=40)
-        self.vibration_api_key.grid(row=0, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
-
-        ttk.Label(env_frame, text="Sensor API Key:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-        self.sensor_api_key = ttk.Entry(env_frame, show="*", width=40)
-        self.sensor_api_key.grid(row=1, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
-
-        ttk.Label(env_frame, text="IPK Bucket API Key:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
-        self.ipk_bucket_api_key = ttk.Entry(env_frame, show="*", width=40)
-        self.ipk_bucket_api_key.grid(row=2, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
-
-        # VM Settings
-        vm_frame = ttk.LabelFrame(main_frame, text="VM Ingestion Settings", padding="10")
-        vm_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
-        
         ttk.Label(vm_frame, text="VM Endpoint:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         self.vm_endpoint = ttk.Entry(vm_frame, width=40)
+        self.vm_endpoint.insert(0, "ex:http://123.123.123:PORT/ingest")  # example
         self.vm_endpoint.grid(row=0, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
-        
-        ttk.Label(vm_frame, text="VM API Key:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-        self.vm_api_key = ttk.Entry(vm_frame, show="*", width=40)
-        self.vm_api_key.grid(row=1, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
-
+        ttk.Label(vm_frame, text="VM API Key:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+        self.vm_api_key = ttk.Entry(vm_frame, width=40, show="*")
+        self.vm_api_key.grid(row=2, column=1, padx=5, pady=5, sticky=(tk.W, tk.E))
         # Status Frame
         status_frame = ttk.LabelFrame(main_frame, text="Installation Status", padding="10")
-        status_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
+        status_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
         status_frame.columnconfigure(0, weight=1)
         status_frame.rowconfigure(0, weight=1)
-        
-        # Add scrollbar to status text
+
         status_scroll = ttk.Scrollbar(status_frame)
         status_scroll.grid(row=0, column=1, sticky=(tk.N, tk.S))
-        
-        # Status Text with scrollbar
-        self.status_text = tk.Text(status_frame, height=10, width=60, wrap=tk.WORD,
-                                 yscrollcommand=status_scroll.set)
+
+        self.status_text = tk.Text(
+            status_frame,
+            height=10,
+            width=60,
+            wrap=tk.WORD,
+            yscrollcommand=status_scroll.set
+        )
         self.status_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 5))
         status_scroll.config(command=self.status_text.yview)
         self.status_text.configure(state='disabled')
-        
-        # Configure the status frame to expand
+
         main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(5, weight=1)
+        main_frame.rowconfigure(4, weight=1)
 
         # Progress Bar
         progress_frame = ttk.Frame(main_frame)
-        progress_frame.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
-        
+        progress_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+
         ttk.Label(progress_frame, text="Progress:").grid(row=0, column=0, sticky=tk.W, padx=5)
         self.progress = ttk.Progressbar(progress_frame, length=400, mode='determinate')
         self.progress.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
         progress_frame.columnconfigure(1, weight=1)
 
-        # Button Frame
+        # Buttons
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=7, column=0, columnspan=3, pady=10)
+        button_frame.grid(row=6, column=0, columnspan=3, pady=10)
 
-        # Style configuration for buttons
         style = ttk.Style()
         style.configure("Install.TButton", font=("Arial", 11))
 
-        # Install Router Button
-        install_button = ttk.Button(button_frame, text="Install Router", 
-                                command=self.run_installation,
-                                style="Install.TButton",
-                                width=15)
+        install_button = ttk.Button(
+            button_frame,
+            text="Router Installer ",
+            command=self.run_installation,
+            style="Install.TButton",
+            width=15
+        )
         install_button.pack(side=tk.LEFT, padx=10)
 
-        # Sensor Setup Button with Note
-        sensor_setup_button = ttk.Button(button_frame, text="Setup Machine", 
-                                    command=self.run_sensor_setup,
-                                    style="Install.TButton",
-                                    width=15)
+        sensor_setup_button = ttk.Button(
+            button_frame,
+            text="Setup Machine",
+            command=self.run_sensor_setup,
+            style="Install.TButton",
+            width=15
+        )
         sensor_setup_button.pack(side=tk.LEFT, padx=10)
+
     def run_sensor_setup(self):
         # Show a popup message about router configuration prerequisite
         messagebox.showinfo("Setup Sensor Prerequisites", 
@@ -438,21 +447,10 @@ class RouterConfigGUI:
             messagebox.showerror("Error", "Router password is required!")
             return False
             
-        # Check if API keys are entered in the GUI
-        if not self.vibration_api_key.get().strip():
-            messagebox.showerror("Error", "Vibration Data API Key is required!")
+        # Check if API keys are set in environment
+        if not os.getenv("SENSOR_API_KEY"):
+            messagebox.showerror("Error", "Sensor List API Key is not set in .env file!")
             return False
-        if not self.sensor_api_key.get().strip():
-            messagebox.showerror("Error", "Sensor List API Key is required!")
-            return False
-        if not self.ipk_bucket_api_key.get().strip():
-            messagebox.showerror("Error", "IPK Bucket API Key is required!")
-            return False
-
-        # Mirror GUI values into the process environment for any code paths that still use os.getenv
-        os.environ["VIBRATION_API_KEY"] = self.vibration_api_key.get().strip()
-        os.environ["SENSOR_API_KEY"] = self.sensor_api_key.get().strip()
-        os.environ["IPK_BUCKET_API_KEY"] = self.ipk_bucket_api_key.get().strip()
         
         # Download the latest IPK file before installation
         if not self.download_latest_ipk():
@@ -472,7 +470,29 @@ class GeoSonicInstaller:
     def __init__(self, gui):
         self.gui = gui  # Link to the GUI for logging
         self.log_queue = None
+    def scp_transfer(self, ssh_client, local_path, remote_path):
+        try:
+            self.log_to_threadsafe(
+                f"Uploading {local_path} -> {remote_path}",
+                info=True
+            )
 
+            with SCPClient(ssh_client.get_transport()) as scp:
+                scp.put(local_path, remote_path)
+
+            self.log_to_threadsafe(
+                "Upload successful",
+                info=True
+            )
+
+            return True
+
+        except Exception as e:
+            self.log_to_threadsafe(
+                f"SCP transfer failed: {e}",
+                error=True
+            )
+            raise
     def start_sensor_setup(self):
         """Start the sensor setup process in a separate thread"""
         # Create a queue for thread-safe logging
@@ -668,41 +688,60 @@ class GeoSonicInstaller:
         return hostname, username, password
 
     def test_ssh_connection(self, hostname, username, password):
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        try:
-            self.log_to_threadsafe(f"Connecting to {hostname} via SSH...")
-            client.connect(hostname, username=username, password=password, look_for_keys=False, allow_agent=False)
-            self.log_queue.put(('progress', 20))
-            self.log_to_threadsafe("SSH connection successful!")
-            return client
-        except paramiko.AuthenticationException:
-            self.log_to_threadsafe("Authentication failed, please check if router password is entered correctly.", error=True)
-        except paramiko.SSHException as e:
-            self.log_to_threadsafe(f"SSH error: {e}", error=True)
-        except Exception as e:
-            self.log_to_threadsafe(f"Unexpected error: {e}", error=True)
-        return None
+        def connect(allow_legacy=False):
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-    def scp_transfer(self, client, local_file, remote_path):
-        try:
-            # Check if the local file exists
-            if not os.path.exists(local_file):
-                self.log_to_threadsafe(f"Error: {local_file} does not exist!", error=True)
-                return
-            
-            self.log_to_threadsafe(f"Transferring {local_file} to {remote_path} on the router...")
-            
-            # SCP transfer for a single file
-            with SCPClient(client.get_transport()) as scp:
-                scp.put(local_file, remote_path)
-            
-            self.log_to_threadsafe("File transferred successfully!")
-            self.log_queue.put(('progress', 30))
-        except Exception as e:
-            self.log_to_threadsafe(f"SCP file transfer failed: {str(e)}", error=True)
+            try:
+                self.log_to_threadsafe(
+                    f"Connecting to {hostname} (legacy={allow_legacy})..."
+                )
 
-    
+                connect_kwargs = dict(
+                    hostname=hostname,
+                    username=username,
+                    password=password,
+                    look_for_keys=False,
+                    allow_agent=False,
+                    timeout=10,
+                )
+
+                if allow_legacy:
+                    # Force Paramiko to accept older ssh-rsa systems
+                    connect_kwargs["disabled_algorithms"] = {
+                        "pubkeys": [],
+                        "kex": [],
+                    }
+
+                client.connect(**connect_kwargs)
+                return client
+
+            except paramiko.ssh_exception.SSHException as e:
+                raise e
+
+            except (socket.error, paramiko.AuthenticationException) as e:
+                raise e
+
+        # 1. Try modern first
+        try:
+            return connect(allow_legacy=False)
+
+        except Exception as e:
+            msg = str(e).lower()
+
+            # 2. Retry ONLY if it looks like algorithm mismatch
+            if (
+                "no matching" in msg
+                or "ssh-rsa" in msg
+                or "kex" in msg
+                or "host key" in msg
+            ):
+                self.log_to_threadsafe("Retrying with legacy SSH compatibility...", info=True)
+                return connect(allow_legacy=True)
+
+            self.log_to_threadsafe(f"SSH failed: {e}", error=True)
+            return None
+
     def get_mac_id(self, client, interface="eth1"):
         """Get the MAC address of the router for device identification"""
         # Updated command to match "HWaddr XX:XX:XX:XX:XX:XX" format
@@ -718,20 +757,15 @@ class GeoSonicInstaller:
 
     def create_config_file(self,client):
         """Generates the vibration.conf file that will be uploaded onto the router based on user input"""
-        # Get API keys from the GUI fields
-        api_key = self.gui.vibration_api_key.get().strip()
-        sensor_api_key = self.gui.sensor_api_key.get().strip()
-        vm_endpoint = self.gui.vm_endpoint.get()
-        vm_api_key = self.gui.vm_api_key.get()
-
+        sensor_api_key = os.getenv("SENSOR_API_KEY")
+        vm_endpoint = self.gui.vm_endpoint.get().strip()
+        vm_api_key = self.gui.vm_api_key.get().strip()
         config_content = f"""\
 # Vibration monitor configuration
 tty_device=/dev/ttyUSB4
 threshold=1.5
 data_dir=/tmp/vibration_data
 clear_events=true
-cloud_function_url=https://insert-vibration-data-836427764358.northamerica-northeast2.run.app
-api_key={api_key}
 get_sensor_cloud_url=https://sensor-key-retrieval-836427764358.northamerica-northeast2.run.app
 get_sensor_api_key={sensor_api_key}
 vm_endpoint={vm_endpoint}

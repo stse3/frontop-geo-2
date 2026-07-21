@@ -69,5 +69,6 @@
         "valarray": "cpp",
         "variant": "cpp",
         "cstdarg": "cpp"
-    }
+    },
+    "makefile.configureOnOpen": false
 }
